@@ -1,0 +1,15 @@
+# Node
+node_modules/
+**/node_modules/
+
+# Next.js
+.next/
+**/.next/
+
+# pnpm
+.pnpm-store/
+
+# env
+.env
+.env.local
+
