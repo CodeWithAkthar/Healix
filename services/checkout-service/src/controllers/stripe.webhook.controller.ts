@@ -1,0 +1,118 @@
+import { Request, Response } from 'express';
+import Stripe from 'stripe';
+import { stripe } from '../config/stripe.js';
+import { env } from '../config/env.js';
+import { PaymentService } from '../services/payment.service.js';
+import { OrderService } from '../services/order.service.js';
+import { CheckoutService } from '../services/checkout.service.js';
+import { CartRepository } from '../repositories/cart.repository.js';
+import { webhookIdempotency } from '../utils/webhook-idempotency.js';
+import { DynamoRefundRepository } from '../repositories/refund.repository.dynamo.js';
+import { AnalyticsService } from '../analytics/analytics.service.js';
+
+export class StripeWebHookController {
+  constructor(
+    private paymentService: PaymentService,
+    private orderService: OrderService,
+    private checkoutService: CheckoutService,
+    private cartRepo: CartRepository,
+    private webhookIdempotancy: webhookIdempotency,
+    private refundRepo: DynamoRefundRepository,
+    private analyticsService: AnalyticsService,
+  ) {}
+
+  handle = async (req: Request, res: Response) => {
+    const sig = req.headers['stripe-signature'] as string;
+
+    let event: Stripe.Event;
+
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        sig,
+        env.stripeWebHookSecretKey,
+      );
+    } catch (err) {
+      console.error('❌ Webhook signature verification failed', err);
+      return res.status(400).send('Webhook signature verification failed');
+    }
+
+    console.log('📩 Stripe event:', event.type);
+
+    if (await this.webhookIdempotancy.isProcessed(event.id)) {
+      console.log('⚠️ Duplicate webhook ignored:', event.id);
+      return res.sendStatus(200);
+    }
+
+    try {
+      // =========================
+      // PAYMENT SUCCESS
+      // =========================
+
+      if (event.type === 'checkout.session.completed') {
+        const session = event.data.object as Stripe.Checkout.Session;
+
+        console.log('💰 CheckoutSession:', session.id);
+        await this.checkoutService.handleCompletedStripeSession(session.id);
+
+        console.log('✅ Payment processed successfully');
+      }
+
+      // =========================
+      // PAYMENT FAILED
+      // =========================
+
+      if (event.type === 'checkout.session.expired') {
+        const session = event.data.object as Stripe.Checkout.Session;
+        await this.checkoutService.releaseStripeSession(session.id);
+
+        console.log('❌ Payment failed handled');
+      }
+
+      // =========================
+      // REFUND
+      // =========================
+
+      if (event.type === 'charge.refunded') {
+        const charge = event.data.object as Stripe.Charge;
+
+        if (!charge.refunds || charge.refunds.data.length === 0) {
+          return res.sendStatus(200);
+        }
+
+        const refund = charge.refunds.data[0];
+
+        if (
+          !refund.metadata ||
+          !refund.metadata.orderId ||
+          !refund.metadata.refundId
+        ) {
+          return res.sendStatus(200);
+        }
+
+        await this.refundRepo.updateStatus(
+          refund.metadata.orderId,
+          refund.metadata.refundId,
+          'SUCCESS',
+          refund.id,
+        );
+
+        // ✅ TRACK REFUND ANALYTICS
+        await this.analyticsService.trackRefund(
+          refund.amount / 100,
+          new Date().toISOString(),
+        );
+
+        console.log('↩️ Refund processed');
+      }
+
+      await this.webhookIdempotancy.markProcessed(event.id);
+
+      res.json({ received: true });
+    } catch (error) {
+      console.error('🔥 Webhook processing error:', error);
+
+      res.sendStatus(500);
+    }
+  };
+}

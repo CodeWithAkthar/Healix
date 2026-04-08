@@ -6,19 +6,39 @@ dotenv.config();
 export const env = {
   port: Number(process.env.PORT || 4001),
   mongoUri: process.env.MONGO_URI || '',
+  redisHost: process.env.REDIS_HOST || '127.0.0.1',
+  redisPort: Number(process.env.REDIS_PORT) || 6379,
+  meCacheTtlSeconds: Number(process.env.ME_CACHE_TTL_SECONDS) || 300,
 
   jwt: {
-    access: {
-      secret: process.env.JWT_ACCESS_SECRET,
-      expiresIn:
-        (process.env.JWT_ACCESS_EXPIRES_IN as SignOptions['expiresIn']) ||
-        '15m',
+    user: {
+      access: {
+        secret: process.env.JWT_USER_ACCESS_SECRET!,
+        expiresIn:
+          (process.env.USER_JWT_EXPIRES_IN as SignOptions['expiresIn']) ||
+          '15m',
+      },
+      refresh: {
+        secret: process.env.USER_REFRESH_SECRET!,
+        expiresIn:
+          (process.env.USER_REFRESH_EXPIRES_IN as SignOptions['expiresIn']) ||
+          '7d',
+      },
     },
-    refresh: {
-      secret: process.env.JWT_REFRESH_SECRET,
-      expiresIn:
-        (process.env.JWT_REFRESH_EXPIRES_IN as SignOptions['expiresIn']) ||
-        '7d',
+
+    admin: {
+      access: {
+        secret: process.env.ADMIN_JWT_SECRET!,
+        expiresIn:
+          (process.env.ADMIN_JWT_EXPIRES_IN as SignOptions['expiresIn']) ||
+          '10m',
+      },
+      refresh: {
+        secret: process.env.ADMIN_REFRESH_SECRET!,
+        expiresIn:
+          (process.env.ADMIN_REFRESH_EXPIRES_IN as SignOptions['expiresIn']) ||
+          '3d',
+      },
     },
   },
 
